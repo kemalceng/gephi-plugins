@@ -5,19 +5,18 @@
 package com.cna.myfirstplugin;
 
 import org.gephi.data.attributes.api.AttributeModel;
+import org.gephi.statistics.spi.Statistics;
+import org.gephi.utils.longtask.spi.LongTask;
+import org.gephi.utils.progress.Progress;
+import org.gephi.utils.progress.ProgressTicket;
 import org.gephi.graph.api.Graph;
 import org.gephi.graph.api.GraphModel;
 import org.gephi.graph.api.Node;
-import org.gephi.statistics.spi.Statistics;
-//import org.gephi.utils.longtask.spi.LongTask;
-import org.gephi.utils.progress.Progress;
-import org.gephi.utils.progress.ProgressTicket;
-
 /**
  *
  * @author kemalbeskardesler
  */
-public class MyMetric implements Statistics{
+public class MyMetric implements Statistics, LongTask{
 
     private String report = "<html><Body><h1>Hello World!</h1> </Body></html>";
     private boolean cancel = false;
@@ -33,17 +32,16 @@ public class MyMetric implements Statistics{
         return report;
     }
 
-//    @Override
-//    public boolean cancel() {
-//        cancel = true;
-//        return true;
-//    }
-//
-//    @Override
-//    public void setProgressTicket(ProgressTicket pt) {
-//        this.progressTicket = pt;
-//    }
+    @Override
+    public boolean cancel() {
+        cancel = true;
+        return true;
+    }
 
+    @Override
+    public void setProgressTicket(ProgressTicket pt) {
+        this.progressTicket = pt;
+    }
     private void actionExecute(GraphModel graphModel, AttributeModel attributeModel) {
         
         boolean bExecuteEnabled = false;
@@ -78,6 +76,5 @@ public class MyMetric implements Statistics{
         }
         
         graph.readUnlockAll();
-    }
-    
+    }   
 }
