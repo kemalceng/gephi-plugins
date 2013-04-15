@@ -21,6 +21,7 @@ import org.gephi.layout.spi.LayoutBuilder;
 import org.gephi.layout.spi.LayoutProperty;
 import org.gephi.utils.longtask.spi.LongTask;
 import org.gephi.utils.progress.ProgressTicket;
+import org.openide.util.Exceptions;
 import org.openide.util.Lookup;
 
 /**
@@ -77,13 +78,16 @@ public class MultipartiteLayout implements Layout, LongTask {
     }
 
     @Override
-    public void setGraphModel(GraphModel graphModel) {
+    public void setGraphModel(GraphModel graphModel)
+    {
         this.graphModel = graphModel;
         
         // Add LayerNo attribute to nodes
         AttributeModel am = Lookup.getDefault().lookup(AttributeController.class).getModel();
-        am.getNodeTable().addColumn(COLUMN_LAYER_NO, AttributeType.INT);
-        
+        if(!am.getNodeTable().hasColumn(COLUMN_LAYER_NO))
+        {
+            am.getNodeTable().addColumn(COLUMN_LAYER_NO, AttributeType.INT);
+        }
         graph = this.graphModel.getHierarchicalGraphVisible();
         // Organize graph into layers
         constructLayers();
@@ -346,7 +350,7 @@ public class MultipartiteLayout implements Layout, LongTask {
             nodeXPosition = 0;
             for(Object node : sourceLayerNodes)
             {
-                ((Node)node).getNodeData().setY(nodeYPosition * 50);
+                ((Node)node).getNodeData().setY(nodeYPosition * -50);
                 ((Node)node).getNodeData().setX(nodeXPosition * 50);
                 nodeXPosition++;
             }
@@ -372,7 +376,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         {
             for(int j = 0; j < targetLayerNodes.length; j++)
             {
-                if(graph.getEdge((Node)(sourceLayerNodes[i]), (Node)(targetLayerNodes[i])) != null)
+                if(graph.getEdge((Node)(sourceLayerNodes[i]), (Node)(targetLayerNodes[j])) != null)
                 {
                     matrix[i][j] = 1;
                 }
@@ -396,15 +400,50 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private void changeMatrixAlignment(Integer[][] matrix, int sourceLayerPosition)
     {
-        Integer[] shiftParameters = findShiftWithLessEdgeCrossings(matrix);
+        Integer[][] matrixWithNewAlignment = matrix.clone();
         
-        // add 1 if shift nodes in target layer
-        int sourceOrTargetLayer = shiftParameters[0];
-        shiftNodes(sourceLayerPosition + sourceOrTargetLayer, shiftParameters[1], shiftParameters[2]);
+        Integer[] shiftParameters = findShiftWithLessEdgeCrossings(matrixWithNewAlignment);
+        
+        // TODO: Total Edge crossing hesaplanınca kaldır burayı
+        int edgeCrossings = 1; //calculateTotalEdgeCrossings(matrix);
+        
+        // TODO: matrixWithNewAlignment değiştirilmeden geliyor
+        if(shiftParameters[0] != -1)
+        {
+            applyShiftToMatrix(matrixWithNewAlignment, shiftParameters);
+            
+            if(calculateTotalEdgeCrossings(matrixWithNewAlignment) < edgeCrossings)
+            {
+                // add 1 if shift nodes in target layer
+                int sourceOrTargetLayer = shiftParameters[0];
+                shiftNodes(sourceLayerPosition + sourceOrTargetLayer, shiftParameters[1], shiftParameters[2]);
+                matrix = matrixWithNewAlignment.clone();
+                
+                // If nodes shifted in target layer and there are more matrixes in lower layers 
+                if(sourceOrTargetLayer == 1 && sourceLayerPosition + 1 < adjacencyMatrixes.size())
+                {
+                    shiftParameters[0] = 0;
+                    applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1), shiftParameters);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ex) {
+                    Exceptions.printStackTrace(ex);
+                }
+            }
+        }
     }
 
-    // Shift Parameters : [Shift Source/Target(0:1), node1 index, node2 index]
     private Integer[] findShiftWithLessEdgeCrossings(Integer[][] matrix)
+    {
+        //return generateRandomShift(matrix);
+        
+        Integer[] shiftParameters = findBetterDiagonalAlignment(matrix);
+        
+        return shiftParameters; 
+    }
+
+    public Integer[] generateRandomShift(Integer[][] matrix)
     {
         Integer [] shiftParameters = new Integer[3];
         int min = 0, maxRow = matrix.length, maxColumn = matrix[0].length;
@@ -437,10 +476,11 @@ public class MultipartiteLayout implements Layout, LongTask {
         shiftParameters[1] = shiftNode1No;
         shiftParameters[2] = shiftNode2No;
         
-        return shiftParameters; 
+        return shiftParameters;
     }
-
-    private void shiftNodes(int layerPosition, Integer node1Index, Integer node2Index) {
+    
+    private void shiftNodes(int layerPosition, Integer node1Index, Integer node2Index)
+    {
         Node node1 = ((List<Node>)layerToNodesMap.get(layerPosition)).get(node1Index);
         Node node2 = ((List<Node>)layerToNodesMap.get(layerPosition)).get(node2Index);
         
@@ -449,5 +489,151 @@ public class MultipartiteLayout implements Layout, LongTask {
         
         node1.getNodeData().setX(node2X);
         node2.getNodeData().setX(node1X);
+    }
+
+    private int calculateTotalEdgeCrossings(Integer[][] matrix) {
+        return 0;
+    }
+
+    // Returns Shift Parameters : [Shift Source/Target/None(0:1:-1), node1 index, node2 index]
+    private Integer[] findBetterDiagonalAlignment(Integer[][] matrix)
+    {
+        Integer[] shiftParameters = new Integer[3];
+
+        int rows = matrix.length;
+        int columns = matrix[0].length;
+        
+        // Diagonal distance values of rows, if row is changed to ith row
+        // [First row in jth row ]
+        // [Second row in jth row]
+        // [... .. .. . .. . . . ]
+        // [ith row in jth row   ]
+        int[][] rowExchangeMatrix = new int[rows][rows];
+
+        // Diagonal distance values of columns, if columns is changed to ith column
+        // [First column in jth column ]
+        // [Second column in jth column]
+        // [... .. .. . .. . . .  . .. ]
+        // [ith column in jth column   ]
+        int[][] columnExchangeMatrix = new int[columns][columns];
+       
+        // Calculate diagonal distances
+        for(int i = 0; i < rows; i++)
+        {
+            for(int j = 0; j < columns; j++)
+            {
+                if(matrix[i][j] == 1)
+                {
+                    // Calculate diagonal distances of row changes
+                    // ith row in kth row
+                    for(int k = 0; k < rows; k++)
+                    {
+                        rowExchangeMatrix[i][k] += Math.abs(k - j);
+                    }
+                    
+                    // Calculate diagonal distances of column changes
+                    // ith column in kth column
+                    for(int k = 0; k < columns; k++)
+                    {
+                        columnExchangeMatrix[j][k] += Math.abs(k - i);
+                    }
+                }
+            }
+        }
+        
+        // [Exchange effect, row1No, row2No]
+        Integer[] rowsToBeExchanged = findExchange(rowExchangeMatrix);
+        
+        // [Exchange effect, column1No, column2No]
+        Integer[] columnsToBeExchanged = findExchange(columnExchangeMatrix);
+
+        if(rowsToBeExchanged[0] != -1 && columnsToBeExchanged[0] != -1)
+        {
+            if(rowsToBeExchanged[0] < columnsToBeExchanged[0])
+            {
+                shiftParameters[0] = 0; // source
+                shiftParameters[1] = rowsToBeExchanged[1];
+                shiftParameters[2] = rowsToBeExchanged[2];
+            }
+            else if(columnsToBeExchanged[0] < rowsToBeExchanged[0])
+            {
+                shiftParameters[0] = 1; // target
+                shiftParameters[1] = columnsToBeExchanged[1];
+                shiftParameters[2] = columnsToBeExchanged[2];
+            }
+            else
+            {
+                if(rows > columns)
+                {
+                    shiftParameters[0] = 0; // source
+                    shiftParameters[1] = rowsToBeExchanged[1];
+                    shiftParameters[2] = rowsToBeExchanged[2];
+                }
+                else
+                {
+                    shiftParameters[0] = 1; // target
+                    shiftParameters[1] = columnsToBeExchanged[1];
+                    shiftParameters[2] = columnsToBeExchanged[2];    
+                }
+            }
+        }
+        else
+        {
+            //Both equal to 1 indicating no change
+            shiftParameters[0] = -1;
+        }
+        
+        return shiftParameters;
+    }
+
+    // Returns [Exchange effect, row/column1No, row/column2No]
+    // Exchange effect = 1 if no change 
+    private Integer[] findExchange(int[][] exchangeMatrix)
+    {    
+        Integer [] exchangeInfo = new Integer[3];
+        int length = exchangeMatrix.length;
+        
+        // init as change not applied
+        exchangeInfo[0] = 1; // Positive value
+        
+        for (int i = 0; i < length; i++)
+        {
+            for (int j = i + 1; j < length; j++)
+            {
+                int exchangeDiff = exchangeMatrix[i][j] + exchangeMatrix[j][i]
+                        - exchangeMatrix[i][i] - exchangeMatrix[j][j];
+                if(exchangeDiff < exchangeInfo[0])
+                {
+                    exchangeInfo[0] = exchangeDiff;
+                    exchangeInfo[1] = i;
+                    exchangeInfo[2] = j;
+                }
+            }
+        }
+       
+        return exchangeInfo;
+    }
+
+    private void applyShiftToMatrix(Integer[][] matrix, Integer[] shiftParameters)
+    {
+        int node1Index = shiftParameters[1];
+        int node2Index = shiftParameters[2];
+        
+        if(shiftParameters[0] == 0) // source (row shift)
+        {
+            Integer[] firstRow = matrix[node1Index].clone();
+            matrix[node1Index] = matrix[node2Index].clone();
+            matrix[node2Index] = firstRow.clone();
+        }
+        else // target (column shift)
+        {
+            Integer node1Value;
+            for (int i = 0; i < matrix.length; i++)
+            {
+                node1Value = matrix[i][node1Index];
+                matrix[i][node1Index] = matrix[i][node2Index];
+                matrix[i][node2Index] = node1Value;
+            }
+        }
     }
 }
