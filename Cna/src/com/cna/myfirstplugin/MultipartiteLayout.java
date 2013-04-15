@@ -153,13 +153,13 @@ public class MultipartiteLayout implements Layout, LongTask {
         Edge[] edges = graph.getEdges(node).toArray();
         Attributes currentAtts = node.getAttributes();
         
-        // ALways null - no need to check
+        // Always null - just to check
         if(currentAtts.getValue(COLUMN_LAYER_NO) == null)
         {
             for(int i = 0; i<edges.length; i++)
             {
                 Edge edge = edges[i];
-                Integer adjacentLayerNo = (Integer)edge.getTarget().getAttributes().getValue(COLUMN_LAYER_NO);
+                Integer adjacentLayerNo = (Integer)(graph.getOpposite(node, edge)).getAttributes().getValue(COLUMN_LAYER_NO);
                 
                 // Set adjacent Layer No (Current LayerNo + 1)
                 if(adjacentLayerNo != null)
@@ -195,6 +195,25 @@ public class MultipartiteLayout implements Layout, LongTask {
         for (int i = 0; i < nodeCount; i++)
         {
             assignLayerNo(nodes[i]);
+        }
+        
+        for (int i = 0; i < layerToNodesMap.size(); i++)
+        {
+            List<Node> nodesInLayer = (List<Node>)layerToNodesMap.get(i);
+            for (int j = 0; j < nodesInLayer.size(); j++)
+            {
+                for (int k= j; k < nodesInLayer.size(); k++)
+                {
+                    if(graph.getEdge(nodesInLayer.get(j), nodesInLayer.get(k)) != null)
+                    {
+                        Node nodeInWrongLayer = nodesInLayer.get(k);
+                        Attributes currentAtts = nodeInWrongLayer.getAttributes();
+                        currentAtts.setValue(COLUMN_LAYER_NO, null);
+                        nodesInLayer.remove(nodeInWrongLayer);
+                        assignLayerNo(nodeInWrongLayer);
+                    }
+                }
+            }
         }
         
         for (int i = 0; i < nodeCount; i++)
@@ -418,6 +437,7 @@ public class MultipartiteLayout implements Layout, LongTask {
                 int sourceOrTargetLayer = shiftParameters[0];
                 shiftNodes(sourceLayerPosition + sourceOrTargetLayer, shiftParameters[1], shiftParameters[2]);
                 matrix = matrixWithNewAlignment.clone();
+                applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition), shiftParameters);
                 
                 // If nodes shifted in target layer and there are more matrixes in lower layers 
                 if(sourceOrTargetLayer == 1 && sourceLayerPosition + 1 < adjacencyMatrixes.size())
@@ -436,6 +456,8 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private Integer[] findShiftWithLessEdgeCrossings(Integer[][] matrix)
     {
+        printMatrix(matrix);
+        
         //return generateRandomShift(matrix);
         
         Integer[] shiftParameters = findBetterDiagonalAlignment(matrix);
@@ -540,6 +562,10 @@ public class MultipartiteLayout implements Layout, LongTask {
                 }
             }
         }
+        System.out.println("RowExchange");
+        printMatrix(rowExchangeMatrix);
+        System.out.println("ColumnExchange");
+        printMatrix(columnExchangeMatrix);
         
         // [Exchange effect, row1No, row2No]
         Integer[] rowsToBeExchanged = findExchange(rowExchangeMatrix);
@@ -547,7 +573,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         // [Exchange effect, column1No, column2No]
         Integer[] columnsToBeExchanged = findExchange(columnExchangeMatrix);
 
-        if(rowsToBeExchanged[0] != -1 && columnsToBeExchanged[0] != -1)
+        if(rowsToBeExchanged[0] < 0 || columnsToBeExchanged[0] < 0)
         {
             if(rowsToBeExchanged[0] < columnsToBeExchanged[0])
             {
@@ -635,5 +661,35 @@ public class MultipartiteLayout implements Layout, LongTask {
                 matrix[i][node2Index] = node1Value;
             }
         }
+                
+        printMatrix(matrix);
+    }
+
+    private void printMatrix(Integer[][] matrix)
+    {
+        System.out.println("-----------------");
+        for (int i = 0; i < matrix.length; i++)
+        {
+            for (int j = 0; j < matrix[0].length; j++)
+            {
+                System.out.print(matrix[i][j] + " ");
+            }
+            System.out.println("");
+        }
+        System.out.println("-----------------");
+    }
+
+    private void printMatrix(int[][] matrix)
+    {
+        System.out.println("-----------------");
+        for (int i = 0; i < matrix.length; i++)
+        {
+            for (int j = 0; j < matrix[0].length; j++)
+            {
+                System.out.print(matrix[i][j] + " ");
+            }
+            System.out.println("");
+        }
+        System.out.println("-----------------");
     }
 }
