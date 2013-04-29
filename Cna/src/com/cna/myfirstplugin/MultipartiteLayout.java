@@ -8,9 +8,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.gephi.data.attributes.api.AttributeColumn;
 import org.gephi.data.attributes.api.AttributeController;
 import org.gephi.data.attributes.api.AttributeModel;
-import org.gephi.data.attributes.api.AttributeType;
 import org.gephi.graph.api.Attributes;
 import org.gephi.graph.api.Edge;
 import org.gephi.graph.api.GraphModel;
@@ -23,6 +23,7 @@ import org.gephi.utils.longtask.spi.LongTask;
 import org.gephi.utils.progress.ProgressTicket;
 import org.openide.util.Exceptions;
 import org.openide.util.Lookup;
+import org.gephi.ui.propertyeditor.NodeColumnStringEditor;
 
 /**
  *
@@ -30,7 +31,7 @@ import org.openide.util.Lookup;
  */
 public class MultipartiteLayout implements Layout, LongTask {
     
-    public static String COLUMN_LAYER_NO = "LayerNo";
+    public static String COLUMN_LAYER_NO = "__LayerNo";
     private boolean cancel = false;
     private boolean executing = false;
     private ProgressTicket progressTicket;
@@ -38,15 +39,25 @@ public class MultipartiteLayout implements Layout, LongTask {
     private GraphModel graphModel;
     private HierarchicalGraph graph;
 //    LayoutProperty mySpeedProperty;
+
+    private AttributeColumn acLayerAttribute = null;
+    private String strLayerAttribute = "";
     float speed;
     private int areaSize;
     int topLayerPosition = 0;
     
-    Map layerToNodesMap = new HashMap<Integer, List<Node>>();
-    Map layerToLayerConnections = new HashMap<Integer, List<Integer>>();
-    Map positionToLayerMap = new HashMap<Integer, Integer>();
+    Map layerToNodesMap = new HashMap<Object, ArrayList<Node>>();
+    Map layerToLayerConnections = new HashMap<Object, List<Object>>();
+    Map positionToLayerMap = new HashMap<Integer, Object>();
     
     ArrayList<Integer[][]> adjacencyMatrixes = new ArrayList<Integer[][]>();
+    private boolean bLayersConstructed = false;
+    private Object firstLayer = null;
+    
+    public int FIRST_MATRIX = 0;
+    public int MIDDLE_MATRIX = -1;
+    public int LAST_MATRIX = 1;
+    public int iTotalEdgeCrossings;
     
     public MultipartiteLayout(MultipartiteLayoutBuilder builder)
     {
@@ -61,6 +72,29 @@ public class MultipartiteLayout implements Layout, LongTask {
         this.speed = speed;
     }
 
+    public AttributeColumn getLayerAttribute()
+    {
+        return acLayerAttribute;
+    }
+            
+    public void setLayerAttribute(AttributeColumn aacLayerAttribute)
+    {
+        resetAll();
+        acLayerAttribute = aacLayerAttribute;
+    }
+
+    public String getLayerAttributeString()
+    {
+        return strLayerAttribute;
+    }
+            
+    public void setLayerAttributeString(String astrLayerAttribute)
+    {
+        resetAll();
+        strLayerAttribute = astrLayerAttribute;
+    }
+
+    
     @Override
     public boolean cancel() {
         cancel = true;
@@ -82,21 +116,27 @@ public class MultipartiteLayout implements Layout, LongTask {
     {
         this.graphModel = graphModel;
         
-        // Add LayerNo attribute to nodes
-        AttributeModel am = Lookup.getDefault().lookup(AttributeController.class).getModel();
-        if(!am.getNodeTable().hasColumn(COLUMN_LAYER_NO))
-        {
-            am.getNodeTable().addColumn(COLUMN_LAYER_NO, AttributeType.INT);
-        }
         graph = this.graphModel.getHierarchicalGraphVisible();
-        // Organize graph into layers
-        constructLayers();
     }
 
     @Override
     public void goAlgo() {
         
         graph.readLock();
+        
+        try
+        {
+            // Organize graph into layers
+            if(!bLayersConstructed)
+            {
+                constructLayersFromAttribute();
+                bLayersConstructed = true;
+            }
+        }
+        catch(Exception e)
+        {
+            resetAll();
+        }
         
         changeAlignment();
         
@@ -109,12 +149,39 @@ public class MultipartiteLayout implements Layout, LongTask {
     }
 
     @Override
-    public void endAlgo() {
+    public void endAlgo()
+    {
+        graph.readLock();
+        
+        for(Node node : graph.getNodes())
+        {
+            node.getNodeData().setLayoutData(null);
+        }
         executing = false;
+        
+        graph.readUnlock();
     }
 
     @Override
     public LayoutProperty[] getProperties() {
+        
+        String strAttributes = "";
+        
+        // Add attributes to layer choice description
+        AttributeModel am = Lookup.getDefault().lookup(AttributeController.class).getModel();
+        for(AttributeColumn column : am.getNodeTable().getColumns())
+        {
+            String columnTitle = column.getTitle();
+            if(!columnTitle.equalsIgnoreCase("Id") && !columnTitle.equalsIgnoreCase("Label"))
+            {
+                if(!strAttributes.isEmpty())
+                {
+                    strAttributes += ", ";
+                }
+                strAttributes += columnTitle;
+            }
+        }
+        
         List<LayoutProperty> properties = new ArrayList<LayoutProperty>();
 
         try {
@@ -122,10 +189,29 @@ public class MultipartiteLayout implements Layout, LongTask {
                     this,
                     Float.class,
                     "Speed",
-                    "CategoryHere",
+                    "Multipartite",
                     "DescriptionHere",
                     "getSpeed",
                     "setSpeed"));
+            
+            properties.add(LayoutProperty.createProperty(
+                    this,
+                    AttributeColumn.class,
+                    "LayerSelection",
+                    "Multipartite",
+                    "Select attribute name for grouping",
+                    "getLayerAttribute",
+                    "setLayerAttribute",
+                    NodeColumnStringEditor.class));
+            
+            properties.add(LayoutProperty.createProperty(
+                    this,
+                    String.class,
+                    "AttributeName",
+                    "Multipartite",
+                    "Attribute name for grouping (" + strAttributes + ")",
+                    "getLayerAttributeString",
+                    "setLayerAttributeString"));
             
         } catch (Exception e) {
             e.printStackTrace();
@@ -138,6 +224,9 @@ public class MultipartiteLayout implements Layout, LongTask {
     @Override
     public void resetPropertiesValues() {
         setSpeed(1.0F);
+        setLayerAttribute(null);
+        bLayersConstructed = false;
+        firstLayer = null;             
     }
 
     @Override
@@ -182,9 +271,47 @@ public class MultipartiteLayout implements Layout, LongTask {
         }
     }
     
+    private void constructLayersFromAttribute()
+    {
+        if(acLayerAttribute == null && strLayerAttribute.isEmpty())
+        {
+            constructLayers();
+            return;
+        }
+
+        int nodeCount = graph.getNodeCount();
+        Node[] nodes = graph.getNodes().toArray();
+
+        String strAttributeUsedAsLayer = (acLayerAttribute != null) ? 
+                acLayerAttribute.getTitle() : strLayerAttribute;
+        
+        for (Node node : nodes)
+        {
+            Object layer = node.getAttributes().getValue(strAttributeUsedAsLayer);
+            
+            if(firstLayer == null)
+            {
+                firstLayer = layer;
+            }
+            
+            if(!layerToNodesMap.containsKey(layer))
+            {
+                layerToNodesMap.put(layer, new ArrayList<Node>());
+            }
+            ((ArrayList)layerToNodesMap.get(layer)).add(node);
+        }
+
+        for (Node node : nodes)
+        {
+            System.out.println((node.getAttributes().getValue(strAttributeUsedAsLayer)).toString()
+                    + " " +(String) node.getAttributes().getValue("Label"));
+        }
+
+        constructMatrixes();
+    }
+    
     private void constructLayers() {
         
-        graph.readLock();
         int nodeCount = graph.getNodeCount();
         Node[] nodes = graph.getNodes().toArray();
         Edge[] edges = graph.getEdges().toArray();
@@ -197,6 +324,7 @@ public class MultipartiteLayout implements Layout, LongTask {
             assignLayerNo(nodes[i]);
         }
         
+        // Check layers constructed
         for (int i = 0; i < layerToNodesMap.size(); i++)
         {
             List<Node> nodesInLayer = (List<Node>)layerToNodesMap.get(i);
@@ -249,9 +377,7 @@ public class MultipartiteLayout implements Layout, LongTask {
                 }
             }         
         }
-*/
-        graph.readUnlock();
-        
+*/        
     }
 
     private void constructMatrixes()
@@ -270,29 +396,36 @@ public class MultipartiteLayout implements Layout, LongTask {
 
         for(int sourceLayerIndex = 0; sourceLayerIndex < layersSet.length; sourceLayerIndex++)
         {
-            Integer sourceLayerNo = (Integer)layersSet[sourceLayerIndex];
+            Object sourceLayer = layersSet[sourceLayerIndex];
             
-            List<Node> nodesInSourceLayer = (List<Node>)layerToNodesMap.get(sourceLayerNo);
+            List<Node> nodesInSourceLayer = (List<Node>)layerToNodesMap.get(sourceLayer);
             
             for(int targetLayerIndex = sourceLayerIndex + 1; targetLayerIndex < layersSet.length; targetLayerIndex++)
             {
-                Integer targetLayerNo = (Integer)layersSet[targetLayerIndex];
+                Object targetLayer = layersSet[targetLayerIndex];
             
-                if(sourceLayerNo == targetLayerNo)
+                if(sourceLayer == targetLayer)
                 {
                     continue; // Buraya girmemesi lazim kontrol et
                 }
                 
-                List<Node> nodesInTargetLayer = (List<Node>)layerToNodesMap.get(targetLayerNo);
+                List<Node> nodesInTargetLayer = (List<Node>)layerToNodesMap.get(targetLayer);
                 
                 // Set which layer connects to which layer
                 if(isThereAnyConnectionBtwnLayers(nodesInSourceLayer, nodesInTargetLayer))
                 {
-                    if(!layerToLayerConnections.containsKey(sourceLayerNo))
+                    if(!layerToLayerConnections.containsKey(sourceLayer))
                     {
-                        layerToLayerConnections.put(sourceLayerNo, new ArrayList<Integer>());
+                        layerToLayerConnections.put(sourceLayer, new ArrayList<Integer>());
                     }
-                    ((ArrayList)layerToLayerConnections.get(sourceLayerNo)).add(targetLayerNo);
+                    ((ArrayList)layerToLayerConnections.get(sourceLayer)).add(targetLayer);
+                    
+                    // Add reverse connection
+                    if(!layerToLayerConnections.containsKey(targetLayer))
+                    {
+                        layerToLayerConnections.put(targetLayer, new ArrayList<Integer>());
+                    }
+                    ((ArrayList)layerToLayerConnections.get(targetLayer)).add(sourceLayer);
                 }
             }
         }
@@ -330,18 +463,32 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private void setLayerPositions()
     {    
-        setTargetLayerPositions((Integer)0, 0);
+        if(firstLayer == null)
+        {
+            firstLayer = 0;
+        }
+        
+        setTargetLayerPositions((Integer)0, firstLayer);
     }
     
-    private void setTargetLayerPositions(int aiLayerPosition, Integer sourceLayerNo)
+    private void setTargetLayerPositions(int aiLayerPosition, Object sourceLayer)
     {   
+        if(!positionToLayerMap.containsValue(sourceLayer))
+        {
+            positionToLayerMap.put(aiLayerPosition, sourceLayer);
+        }
+        else
+        {
+            return;
+        }
+
+        
         if(aiLayerPosition < topLayerPosition)
         {
             topLayerPosition = aiLayerPosition;
-        }
-        positionToLayerMap.put(aiLayerPosition, sourceLayerNo);
-                
-        List<Integer> targetLayers = (List<Integer>)layerToLayerConnections.get(sourceLayerNo);
+        }        
+        
+        List<Object> targetLayers = (List<Object>)layerToLayerConnections.get(sourceLayer);
 
         if(targetLayers == null)
         {
@@ -349,9 +496,31 @@ public class MultipartiteLayout implements Layout, LongTask {
         }
         
         int orientationUpOrDown = aiLayerPosition >= 0 ? 1 : -1;
-        for(Integer targetLayerNo : targetLayers)
+        for(Object targetLayer : targetLayers)
         {
-            setTargetLayerPositions(aiLayerPosition + orientationUpOrDown, targetLayerNo);
+            List<Object> nextLayers = (List<Object>)layerToLayerConnections.get(targetLayer);
+            List<Object> layersWithoutDuplicates = new ArrayList<Object>();
+            
+            boolean bDuplicateExists = false;
+            for (Object layer : nextLayers)
+            {
+                if(!positionToLayerMap.containsValue(layer))
+                {
+                    layersWithoutDuplicates.add(layer);
+                }
+                else
+                {
+                    bDuplicateExists = true;
+                }
+            }
+            
+            if(bDuplicateExists)
+            {
+                layerToLayerConnections.remove(targetLayer);
+                layerToLayerConnections.put(targetLayer, layersWithoutDuplicates);
+            }
+            
+            setTargetLayerPositions(aiLayerPosition + orientationUpOrDown, targetLayer);
             orientationUpOrDown *= -1;
         }
     }
@@ -363,7 +532,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         
         for(int i = 0; i < positionToLayerMap.size(); i++)
         {
-            Object[] sourceLayerNodes = ((List<Node>)layerToNodesMap.get((Integer)positionToLayerMap.get(nodeYPosition))).toArray();
+            Object[] sourceLayerNodes = ((List<Node>)layerToNodesMap.get(positionToLayerMap.get(nodeYPosition))).toArray();
             
             // Set nodes' positions
             nodeXPosition = 0;
@@ -377,7 +546,7 @@ public class MultipartiteLayout implements Layout, LongTask {
             if(nodeYPosition + 1 < positionToLayerMap.size())
             {
                 // Create Matrix
-                Object[] targetLayerNodes = ((List<Node>)layerToNodesMap.get((Integer)positionToLayerMap.get(nodeYPosition + 1))).toArray();
+                Object[] targetLayerNodes = ((List<Node>)layerToNodesMap.get(positionToLayerMap.get(nodeYPosition + 1))).toArray();
                 
                 Integer[][] matrix = convertLayersToMatrix(sourceLayerNodes, targetLayerNodes);
                 
@@ -388,7 +557,8 @@ public class MultipartiteLayout implements Layout, LongTask {
         }
     }
 
-    private Integer[][] convertLayersToMatrix(Object[] sourceLayerNodes, Object[] targetLayerNodes) {
+    private Integer[][] convertLayersToMatrix(Object[] sourceLayerNodes, Object[] targetLayerNodes)
+    {
         Integer[][] matrix = new Integer[sourceLayerNodes.length][targetLayerNodes.length];
         
         for(int i = 0; i < sourceLayerNodes.length; i++)
@@ -411,56 +581,108 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private void changeAlignment()
     {    
+        int iCurrentEdgeCrossings = calculateTotalEdgeCrossings();
+        System.out.println("Current total edge crossings = " + iCurrentEdgeCrossings);
+        
         for(int i = 0; i < adjacencyMatrixes.size(); i++)
         {
             changeMatrixAlignment(adjacencyMatrixes.get(i), topLayerPosition + i);
+        }
+        
+        // No more improvement
+        if(iCurrentEdgeCrossings == iTotalEdgeCrossings)
+        {
+            endAlgo();
         }
     }
 
     private void changeMatrixAlignment(Integer[][] matrix, int sourceLayerPosition)
     {
-        Integer[][] matrixWithNewAlignment = matrix.clone();
+        System.out.println("matrix 1: coming from Adjacency Matrix");
+        printMatrix(matrix);
         
-        Integer[] shiftParameters = findShiftWithLessEdgeCrossings(matrixWithNewAlignment);
+        
+        Integer[][] matrixWithNewAlignment = new Integer[matrix.length][matrix[0].length];
+        copyContent(matrixWithNewAlignment, matrix);
+        
+        int iFirstOrLastMatrix = MIDDLE_MATRIX;
+        
+        if(sourceLayerPosition == 0)
+        {
+            iFirstOrLastMatrix = FIRST_MATRIX;
+        }
+        else if(sourceLayerPosition == adjacencyMatrixes.size() - 1)
+        {
+            iFirstOrLastMatrix = LAST_MATRIX;
+        }
+        
+        Integer[] shiftParameters = findShiftWithLessEdgeCrossings(matrixWithNewAlignment, iFirstOrLastMatrix);
         
         // TODO: Total Edge crossing hesaplanınca kaldır burayı
-        int edgeCrossings = 1; //calculateTotalEdgeCrossings(matrix);
+        int edgeCrossings = calculateEdgeCrossings(matrix);
         
         // TODO: matrixWithNewAlignment değiştirilmeden geliyor
         if(shiftParameters[0] != -1)
         {
             applyShiftToMatrix(matrixWithNewAlignment, shiftParameters);
+            System.out.println("matrix 2: clone shifted");
+            printMatrix(matrixWithNewAlignment);
             
-            if(calculateTotalEdgeCrossings(matrixWithNewAlignment) < edgeCrossings)
+            int newEdgeCrossings = calculateEdgeCrossings(matrixWithNewAlignment);
+            
+            if(newEdgeCrossings < edgeCrossings)
             {
                 // add 1 if shift nodes in target layer
                 int sourceOrTargetLayer = shiftParameters[0];
                 shiftNodes(sourceLayerPosition + sourceOrTargetLayer, shiftParameters[1], shiftParameters[2]);
-                matrix = matrixWithNewAlignment.clone();
-                applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition), shiftParameters);
+                
+                adjacencyMatrixes.remove(sourceLayerPosition);
+                adjacencyMatrixes.add(sourceLayerPosition, matrixWithNewAlignment);
+                System.out.println("matrix 3: matrix changed in adjacency matrix ");
+                printMatrix(adjacencyMatrixes.get(sourceLayerPosition));
+                
+                //Ustteki klonlama yeterli
+                //applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition), shiftParameters);
                 
                 // If nodes shifted in target layer and there are more matrixes in lower layers 
                 if(sourceOrTargetLayer == 1 && sourceLayerPosition + 1 < adjacencyMatrixes.size())
                 {
                     shiftParameters[0] = 0;
                     applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1), shiftParameters);
+                    
+                    System.out.println("matrix 4: matrix changed in next adjacency matrix");
+                    printMatrix(adjacencyMatrixes.get(sourceLayerPosition));
+                
+                    
                 }
-                try {
+                
+                iTotalEdgeCrossings = calculateTotalEdgeCrossings();
+                System.out.println("New total edge crossings = " + iTotalEdgeCrossings);
+                
+                if(iTotalEdgeCrossings == 0)
+                {
+                    endAlgo();
+                }
+                
+                try
+                {
                     Thread.sleep(1000);
-                } catch (InterruptedException ex) {
+                }
+                catch (InterruptedException ex)
+                {
                     Exceptions.printStackTrace(ex);
                 }
             }
         }
     }
 
-    private Integer[] findShiftWithLessEdgeCrossings(Integer[][] matrix)
+    private Integer[] findShiftWithLessEdgeCrossings(Integer[][] matrix, int aiFirstOrLastMatrix)
     {
         printMatrix(matrix);
         
         //return generateRandomShift(matrix);
         
-        Integer[] shiftParameters = findBetterDiagonalAlignment(matrix);
+        Integer[] shiftParameters = findBetterDiagonalAlignment(matrix, aiFirstOrLastMatrix);
         
         return shiftParameters; 
     }
@@ -503,22 +725,61 @@ public class MultipartiteLayout implements Layout, LongTask {
     
     private void shiftNodes(int layerPosition, Integer node1Index, Integer node2Index)
     {
-        Node node1 = ((List<Node>)layerToNodesMap.get(layerPosition)).get(node1Index);
-        Node node2 = ((List<Node>)layerToNodesMap.get(layerPosition)).get(node2Index);
+        ArrayList<Node> nodes = ((ArrayList<Node>)layerToNodesMap.get(positionToLayerMap.get(layerPosition)));
+        Node node1 = nodes.get(node1Index);
+        Node node2 = nodes.get(node2Index);
         
         float node1X = node1.getNodeData().x();
         float node2X = node2.getNodeData().x();
         
         node1.getNodeData().setX(node2X);
         node2.getNodeData().setX(node1X);
+
+        // Shift nodes' positions
+        nodes.remove(node1);
+        nodes.remove(node2);
+        if(node1Index < node2Index)
+        {
+            nodes.add(node1Index, node2);
+            nodes.add(node2Index, node1);
+        }
+        else
+        {
+            nodes.add(node2Index, node1);
+            nodes.add(node1Index, node2);
+        }
+        
     }
 
-    private int calculateTotalEdgeCrossings(Integer[][] matrix) {
-        return 0;
+    private int calculateEdgeCrossings(Integer[][] matrix)
+    {
+        int iNumberOfCrossings = 0;
+        
+        for(int sourceIndex = 0; sourceIndex < matrix.length; sourceIndex++)
+        {
+            for(int targetIndex = 0; targetIndex < matrix[0].length; targetIndex++)
+            {
+                if(matrix[sourceIndex][targetIndex] == 1)
+                {
+                    for(int nextSourceIndex = sourceIndex + 1; nextSourceIndex < matrix.length; nextSourceIndex++)
+                    {
+                        for(int smallerTargetIndex = 0; smallerTargetIndex < targetIndex; smallerTargetIndex++)
+                        {
+                            if(matrix[nextSourceIndex][smallerTargetIndex] == 1)
+                            {
+                                iNumberOfCrossings++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return iNumberOfCrossings;
     }
 
     // Returns Shift Parameters : [Shift Source/Target/None(0:1:-1), node1 index, node2 index]
-    private Integer[] findBetterDiagonalAlignment(Integer[][] matrix)
+    private Integer[] findBetterDiagonalAlignment(Integer[][] matrix, int aiFirstOrLastMatrix)
     {
         Integer[] shiftParameters = new Integer[3];
 
@@ -573,7 +834,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         // [Exchange effect, column1No, column2No]
         Integer[] columnsToBeExchanged = findExchange(columnExchangeMatrix);
 
-        if(rowsToBeExchanged[0] < 0 || columnsToBeExchanged[0] < 0)
+        if(aiFirstOrLastMatrix == FIRST_MATRIX && (rowsToBeExchanged[0] <= 0 || columnsToBeExchanged[0] <= 0))
         {
             if(rowsToBeExchanged[0] < columnsToBeExchanged[0])
             {
@@ -581,27 +842,33 @@ public class MultipartiteLayout implements Layout, LongTask {
                 shiftParameters[1] = rowsToBeExchanged[1];
                 shiftParameters[2] = rowsToBeExchanged[2];
             }
-            else if(columnsToBeExchanged[0] < rowsToBeExchanged[0])
+            else if(columnsToBeExchanged[0] <= rowsToBeExchanged[0])
             {
                 shiftParameters[0] = 1; // target
                 shiftParameters[1] = columnsToBeExchanged[1];
                 shiftParameters[2] = columnsToBeExchanged[2];
             }
-            else
-            {
-                if(rows > columns)
-                {
-                    shiftParameters[0] = 0; // source
-                    shiftParameters[1] = rowsToBeExchanged[1];
-                    shiftParameters[2] = rowsToBeExchanged[2];
-                }
-                else
-                {
-                    shiftParameters[0] = 1; // target
-                    shiftParameters[1] = columnsToBeExchanged[1];
-                    shiftParameters[2] = columnsToBeExchanged[2];    
-                }
-            }
+//            else
+//            {
+//                if(rows > columns)
+//                {
+//                    shiftParameters[0] = 0; // source
+//                    shiftParameters[1] = rowsToBeExchanged[1];
+//                    shiftParameters[2] = rowsToBeExchanged[2];
+//                }
+//                else
+//                {
+//                    shiftParameters[0] = 1; // target
+//                    shiftParameters[1] = columnsToBeExchanged[1];
+//                    shiftParameters[2] = columnsToBeExchanged[2];    
+//                }
+//            }
+        }
+        else if(columnsToBeExchanged[0] <= 0)
+        {
+            shiftParameters[0] = 1; // target
+            shiftParameters[1] = columnsToBeExchanged[1];
+            shiftParameters[2] = columnsToBeExchanged[2];
         }
         else
         {
@@ -691,5 +958,36 @@ public class MultipartiteLayout implements Layout, LongTask {
             System.out.println("");
         }
         System.out.println("-----------------");
+    }
+
+    private void resetAll()
+    {
+        bLayersConstructed = false;
+        layerToNodesMap.clear();
+        layerToLayerConnections.clear();
+        positionToLayerMap.clear();
+        adjacencyMatrixes.clear();
+        firstLayer = null;
+    }
+
+    private int calculateTotalEdgeCrossings()
+    {
+        int iTotalEdgeCrossings = 0;
+        for (Integer[][] matrix : adjacencyMatrixes)
+        {
+            iTotalEdgeCrossings += calculateEdgeCrossings(matrix);
+        }
+        return iTotalEdgeCrossings;
+    }
+
+    private void copyContent(Integer[][] matrixWithNewAlignment, Integer[][] matrix)
+    {
+        for(int i = 0; i < matrix.length; i++)
+        {
+            for(int j = 0; j < matrix[0].length; j++)
+            {
+                matrixWithNewAlignment[i][j] = matrix[i][j];
+            }
+        }
     }
 }

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+    <key id="LayerNo" for="node" attr.name="LayerNo" attr.type="string"></key>
+    <key id="Category" for="node" attr.name="Category" attr.type="string"></key>
+    <graph id="G" edgedefault="undirected">
+        <node id="A">
+            <data key="LayerNo">0</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="B">
+            <data key="LayerNo">0</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="C">
+            <data key="LayerNo">0</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="1">
+            <data key="LayerNo">1</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <node id="2">
+            <data key="LayerNo">1</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <node id="3">
+            <data key="LayerNo">1</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <node id="4">
+            <data key="LayerNo">1</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <node id="X">
+            <data key="LayerNo">2</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="Y">
+            <data key="LayerNo">2</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="Z">
+            <data key="LayerNo">2</data>
+            <data key="Category">Alphabetic</data>
+        </node>
+        <node id="5">
+            <data key="LayerNo">3</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <node id="6">
+            <data key="LayerNo">3</data>
+            <data key="Category">Numeric</data>
+        </node>
+        <edge id="eA2" source="A" target="2">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eA3" source="A" target="3">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eB1" source="B" target="1">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eB4" source="B" target="4">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eC1" source="C" target="1">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="e1X" source="1" target="X">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="e1Z" source="1" target="Z">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="e2X" source="2" target="X">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="e3Y" source="3" target="Y">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="e4Z" source="4" target="Z">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eX6" source="X" target="6">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eY6" source="Y" target="6">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eZ5" source="Z" target="5">
+            <data key="weight">0.4</data>
+        </edge>
+        <edge id="eZ6" source="Z" target="6">
+            <data key="weight">0.4</data>
+        </edge>
+        
+    </graph>
+</graphml>
