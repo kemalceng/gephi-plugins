@@ -76,7 +76,7 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     public void setSpeed(Float speed) {
         this.speed = speed;
-        propertiesPanel.numSpeed.setValue(speed);
+        propertiesPanel.numSpeed.setValue(speed.intValue());
     }
 
     public AttributeColumn getLayerAttribute()

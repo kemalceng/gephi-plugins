@@ -17,11 +17,11 @@ import org.openide.util.Lookup;
 public class MultiPartiteLayoutSettigsPanel extends javax.swing.JPanel {
 
     public static String ATTRIBUTE_SELECTION_DESC = 
-            "Select attribute name for constructing layers.";
+            "Select attribute name for\nconstructing layers.";
     public static String SPEED_DESC = 
             "Set speed of the algorithm.";
     public static String REFRESH_DESC = 
-            "Refresh layer selection attributes.";
+            "Refresh layer selection\nattributes.";
     private final MultipartiteLayout multipartiteLayoutInstance;
     
     /**
@@ -167,8 +167,8 @@ public class MultiPartiteLayoutSettigsPanel extends javax.swing.JPanel {
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.UNRELATED)
                 .add(jLabel1)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 130, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(63, Short.MAX_VALUE))
+                .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(45, Short.MAX_VALUE))
         );
 
         lblLayerAttribute.getAccessibleContext().setAccessibleName(org.openide.util.NbBundle.getMessage(MultiPartiteLayoutSettigsPanel.class, "MultiPartiteLayoutSettigsPanel.lblLayerAttribute.AccessibleContext.accessibleName")); // NOI18N
@@ -199,7 +199,7 @@ public class MultiPartiteLayoutSettigsPanel extends javax.swing.JPanel {
     }//GEN-LAST:event_btnRefreshActionPerformed
 
     private void numSpeedPropertyChange(java.beans.PropertyChangeEvent evt) {//GEN-FIRST:event_numSpeedPropertyChange
-        multipartiteLayoutInstance.speed = ((Float)(this.numSpeed.getValue())).floatValue();
+        multipartiteLayoutInstance.speed = ((Integer)(this.numSpeed.getValue())).floatValue();
         long sleepTime = (long)(MultipartiteLayout.MAX_WAITING_TIME / multipartiteLayoutInstance.speed);
         if(sleepTime >= 0)
         {
