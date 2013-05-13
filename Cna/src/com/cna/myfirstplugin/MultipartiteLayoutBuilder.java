@@ -18,7 +18,7 @@ import org.openide.util.lookup.ServiceProvider;
  
 @ServiceProvider(service = LayoutBuilder.class)
 public class MultipartiteLayoutBuilder implements LayoutBuilder{
-
+    
     @Override
     public String getName() {
         return "MultipartiteLayout";
@@ -40,7 +40,7 @@ public class MultipartiteLayoutBuilder implements LayoutBuilder{
 
             @Override
             public JPanel getSimplePanel(Layout layout) {
-                return null;
+                return ((MultipartiteLayout)layout).propertiesPanel;
             }
 
             @Override

@@ -32,24 +32,27 @@ import org.gephi.ui.propertyeditor.NodeColumnStringEditor;
 public class MultipartiteLayout implements Layout, LongTask {
     
     public static String COLUMN_LAYER_NO = "__LayerNo";
+    public static int MAX_WAITING_TIME = 2000;
     private boolean cancel = false;
     private boolean executing = false;
     private ProgressTicket progressTicket;
     private final LayoutBuilder multipartiteLayoutBuilder;
     private GraphModel graphModel;
     private HierarchicalGraph graph;
+    MultiPartiteLayoutSettigsPanel propertiesPanel;
 //    LayoutProperty mySpeedProperty;
 
     private AttributeColumn acLayerAttribute = null;
     private String strLayerAttribute = "";
-    float speed;
+    float speed = 1.0f;
     private int areaSize;
     int topLayerPosition = 0;
     
     Map layerToNodesMap = new HashMap<Object, ArrayList<Node>>();
     Map layerToLayerConnections = new HashMap<Object, List<Object>>();
     Map positionToLayerMap = new HashMap<Integer, Object>();
-    
+    List<Map> orderList = new ArrayList<Map>();
+    int iMinExtraEdgeCountOfOrder = Integer.MAX_VALUE;
     ArrayList<Integer[][]> adjacencyMatrixes = new ArrayList<Integer[][]>();
     private boolean bLayersConstructed = false;
     private Object firstLayer = null;
@@ -58,10 +61,13 @@ public class MultipartiteLayout implements Layout, LongTask {
     public int MIDDLE_MATRIX = -1;
     public int LAST_MATRIX = 1;
     public int iTotalEdgeCrossings;
+    public long sleepWaitTime = MAX_WAITING_TIME;
+    private boolean bReverseApplied = false;
     
     public MultipartiteLayout(MultipartiteLayoutBuilder builder)
     {
         this.multipartiteLayoutBuilder = builder;
+        this.propertiesPanel = new MultiPartiteLayoutSettigsPanel(this);
     }
 
     public float getSpeed() {
@@ -70,6 +76,7 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     public void setSpeed(Float speed) {
         this.speed = speed;
+        propertiesPanel.numSpeed.setValue(speed);
     }
 
     public AttributeColumn getLayerAttribute()
@@ -135,6 +142,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         }
         catch(Exception e)
         {
+            System.out.println(e.getMessage());
             resetAll();
         }
         
@@ -164,7 +172,7 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     @Override
     public LayoutProperty[] getProperties() {
-        
+
         String strAttributes = "";
         
         // Add attributes to layer choice description
@@ -181,7 +189,7 @@ public class MultipartiteLayout implements Layout, LongTask {
                 strAttributes += columnTitle;
             }
         }
-        
+                
         List<LayoutProperty> properties = new ArrayList<LayoutProperty>();
 
         try {
@@ -216,17 +224,19 @@ public class MultipartiteLayout implements Layout, LongTask {
         } catch (Exception e) {
             e.printStackTrace();
         }
-
+        
         return properties.toArray(new LayoutProperty[0]);
-
     }
 
     @Override
     public void resetPropertiesValues() {
         setSpeed(1.0F);
         setLayerAttribute(null);
+        setLayerAttributeString("");
         bLayersConstructed = false;
-        firstLayer = null;             
+        firstLayer = null;
+        propertiesPanel.txtDescription.setText("");
+        propertiesPanel.initializeLayerAttributesComboBox();
     }
 
     @Override
@@ -234,7 +244,10 @@ public class MultipartiteLayout implements Layout, LongTask {
         return this.multipartiteLayoutBuilder;
     }
 
-    // Starting from layer 0, find suitable layer for the node.
+    /**
+     * Starting from layer 0, find suitable layer for the node.
+     * @param node 
+     */
     public void assignLayerNo(Node node)
     {
         Integer currentLayerNo = 0;
@@ -242,7 +255,6 @@ public class MultipartiteLayout implements Layout, LongTask {
         Edge[] edges = graph.getEdges(node).toArray();
         Attributes currentAtts = node.getAttributes();
         
-        // Always null - just to check
         if(currentAtts.getValue(COLUMN_LAYER_NO) == null)
         {
             for(int i = 0; i<edges.length; i++)
@@ -273,7 +285,7 @@ public class MultipartiteLayout implements Layout, LongTask {
     
     private void constructLayersFromAttribute()
     {
-        if(acLayerAttribute == null && strLayerAttribute.isEmpty())
+        if(strLayerAttribute.isEmpty())
         {
             constructLayers();
             return;
@@ -282,8 +294,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         int nodeCount = graph.getNodeCount();
         Node[] nodes = graph.getNodes().toArray();
 
-        String strAttributeUsedAsLayer = (acLayerAttribute != null) ? 
-                acLayerAttribute.getTitle() : strLayerAttribute;
+        String strAttributeUsedAsLayer = strLayerAttribute;
         
         for (Node node : nodes)
         {
@@ -310,6 +321,11 @@ public class MultipartiteLayout implements Layout, LongTask {
         constructMatrixes();
     }
     
+    
+    /**
+     * If no parameter is specified to construct layers,
+     * this default method automatically assigns layers to the nodes.
+     */
     private void constructLayers() {
         
         int nodeCount = graph.getNodeCount();
@@ -390,6 +406,10 @@ public class MultipartiteLayout implements Layout, LongTask {
         createDefaultMatrixes();
     }
 
+    /**
+     * Using layerToNodesMap, finds the connections between layers
+     * and sets them in layerToLayerConnections map.
+     */
     private void determineLayerConnections()
     {
         Object[] layersSet = (Object[]) layerToNodesMap.keySet().toArray();
@@ -406,7 +426,7 @@ public class MultipartiteLayout implements Layout, LongTask {
             
                 if(sourceLayer == targetLayer)
                 {
-                    continue; // Buraya girmemesi lazim kontrol et
+                    continue; // TODO: Buraya girmemesi lazim kontrol et
                 }
                 
                 List<Node> nodesInTargetLayer = (List<Node>)layerToNodesMap.get(targetLayer);
@@ -430,7 +450,13 @@ public class MultipartiteLayout implements Layout, LongTask {
             }
         }
     }
-
+    
+    /**
+     * Checks the existence of connection between two layers.
+     * @param nodesInSourceLayer    List of nodes in source layer
+     * @param nodesInTargetLayer    List of nodes in target layer
+     * @return                      True if connection exists between source and target layer, false otherwise
+     */
     private boolean isThereAnyConnectionBtwnLayers(List<Node> nodesInSourceLayer, List<Node> nodesInTargetLayer)
     {
         boolean bConnectionExists = false;
@@ -446,21 +472,17 @@ public class MultipartiteLayout implements Layout, LongTask {
             }
         }
         
-//        for(Node sourceNode : nodesInSourceLayer)
-//        {
-//            for(Edge edge : graph.getEdges(sourceNode).toArray())
-//            {
-//                if(nodesInTargetLayer.contains(edge.getTarget())
-//                        || nodesInTargetLayer.contains(edge.getSource()))
-//                {
-//                    return true;
-//                }
-//            }
-//        }
-        
         return bConnectionExists;
     }
 
+    /**
+     * From top to bottom, assigns layers' positions
+     * according to connections between layers using
+     * layerToLayerConnections map.
+     * If no parameter is specified to construct layers,
+     * initializes the first layer as 0 as the start point of
+     * setTargetLayerPositions call.
+     */
     private void setLayerPositions()
     {    
         if(firstLayer == null)
@@ -468,9 +490,17 @@ public class MultipartiteLayout implements Layout, LongTask {
             firstLayer = 0;
         }
         
-        setTargetLayerPositions((Integer)0, firstLayer);
+        setMinimalInterconnectionsBetweenLayers();
+        
+        //setTargetLayerPositions((Integer)0, firstLayer);
     }
     
+    /**
+     * Sets the sourceLayer's position to the position aiLayerPosition
+     * and recursively sets target layers' positions.
+     * @param aiLayerPosition   position index of layer
+     * @param sourceLayer       layer to be positioned
+     */
     private void setTargetLayerPositions(int aiLayerPosition, Object sourceLayer)
     {   
         if(!positionToLayerMap.containsValue(sourceLayer))
@@ -482,11 +512,10 @@ public class MultipartiteLayout implements Layout, LongTask {
             return;
         }
 
-        
         if(aiLayerPosition < topLayerPosition)
         {
             topLayerPosition = aiLayerPosition;
-        }        
+        }       
         
         List<Object> targetLayers = (List<Object>)layerToLayerConnections.get(sourceLayer);
 
@@ -527,6 +556,11 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private void createDefaultMatrixes()
     {
+        createDefaultMatrixes(false);
+    }
+    
+    private void createDefaultMatrixes(boolean abPreserveXPositions)
+    {
         int nodeYPosition = topLayerPosition;
         int nodeXPosition = 0;
         
@@ -539,8 +573,11 @@ public class MultipartiteLayout implements Layout, LongTask {
             for(Object node : sourceLayerNodes)
             {
                 ((Node)node).getNodeData().setY(nodeYPosition * -50);
-                ((Node)node).getNodeData().setX(nodeXPosition * 50);
-                nodeXPosition++;
+                if(!abPreserveXPositions)
+                {
+                    ((Node)node).getNodeData().setX(nodeXPosition * 50);
+                    nodeXPosition++;
+                }
             }
             
             if(nodeYPosition + 1 < positionToLayerMap.size())
@@ -584,15 +621,32 @@ public class MultipartiteLayout implements Layout, LongTask {
         int iCurrentEdgeCrossings = calculateTotalEdgeCrossings();
         System.out.println("Current total edge crossings = " + iCurrentEdgeCrossings);
         
+        if(iCurrentEdgeCrossings == 0)
+        {
+            endAlgo();
+        }
+        
         for(int i = 0; i < adjacencyMatrixes.size(); i++)
         {
-            changeMatrixAlignment(adjacencyMatrixes.get(i), topLayerPosition + i);
+            int iMatrixIndex = i;
+            if(bReverseApplied)
+            {
+                iMatrixIndex = adjacencyMatrixes.size() - 1 - i;
+            }
+            changeMatrixAlignment(adjacencyMatrixes.get(iMatrixIndex), topLayerPosition + iMatrixIndex);
         }
         
         // No more improvement
         if(iCurrentEdgeCrossings == iTotalEdgeCrossings)
         {
-            endAlgo();
+            if(bReverseApplied)
+            {
+                endAlgo();
+            }
+            else
+            {
+                applyReverse();
+            }
         }
     }
 
@@ -617,8 +671,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         }
         
         Integer[] shiftParameters = findShiftWithLessEdgeCrossings(matrixWithNewAlignment, iFirstOrLastMatrix);
-        
-        // TODO: Total Edge crossing hesaplanınca kaldır burayı
+
         int edgeCrossings = calculateEdgeCrossings(matrix);
         
         // TODO: matrixWithNewAlignment değiştirilmeden geliyor
@@ -651,9 +704,18 @@ public class MultipartiteLayout implements Layout, LongTask {
                     applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1), shiftParameters);
                     
                     System.out.println("matrix 4: matrix changed in next adjacency matrix");
-                    printMatrix(adjacencyMatrixes.get(sourceLayerPosition));
+                    printMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1));
                 
+                }
+                // If nodes shifted in source layer and there are more matrixes in upper layers 
+                else if(sourceOrTargetLayer == 0 && sourceLayerPosition > 0)
+                {
+                    shiftParameters[0] = 1;
+                    applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition - 1), shiftParameters);
                     
+                    System.out.println("matrix 4: matrix changed in next adjacency matrix");
+                    printMatrix(adjacencyMatrixes.get(sourceLayerPosition - 1));
+                
                 }
                 
                 iTotalEdgeCrossings = calculateTotalEdgeCrossings();
@@ -666,7 +728,7 @@ public class MultipartiteLayout implements Layout, LongTask {
                 
                 try
                 {
-                    Thread.sleep(1000);
+                    Thread.sleep(sleepWaitTime);
                 }
                 catch (InterruptedException ex)
                 {
@@ -864,11 +926,17 @@ public class MultipartiteLayout implements Layout, LongTask {
 //                }
 //            }
         }
-        else if(columnsToBeExchanged[0] <= 0)
+        else if(!bReverseApplied && columnsToBeExchanged[0] <= 0)
         {
             shiftParameters[0] = 1; // target
             shiftParameters[1] = columnsToBeExchanged[1];
             shiftParameters[2] = columnsToBeExchanged[2];
+        }
+        else if(bReverseApplied && rowsToBeExchanged[0] <= 0)
+        {
+            shiftParameters[0] = 0; // target
+            shiftParameters[1] = rowsToBeExchanged[1];
+            shiftParameters[2] = rowsToBeExchanged[2];
         }
         else
         {
@@ -968,6 +1036,7 @@ public class MultipartiteLayout implements Layout, LongTask {
         positionToLayerMap.clear();
         adjacencyMatrixes.clear();
         firstLayer = null;
+        orderList.clear();
     }
 
     private int calculateTotalEdgeCrossings()
@@ -990,4 +1059,184 @@ public class MultipartiteLayout implements Layout, LongTask {
             }
         }
     }
+
+    /**
+     * To construct matrixes between layers there must be at most two
+     * adjacent layers. This method finds the minimal connections which
+     * satisfies that all layers have at most two adjacent layers
+     * and sets it in positionToLayer map.
+     * For layers having more than two adjacent layers the least connected
+     * layers are omitted as if they are not connected.
+     */
+    private void setMinimalInterconnectionsBetweenLayers()
+    {
+        HashMap<Integer, Object> minExtraEdgeCountOrder = null;
+        List<Map> tempPositionToLayerMapList = null;
+        
+        int iMinExtraEdgeCount = Integer.MAX_VALUE;
+        
+        Object[] layersSet = (Object[]) layerToLayerConnections.keySet().toArray();
+         
+        for (Object layer : layersSet)
+        {
+            tempPositionToLayerMapList = findPossibleOrders(layer);
+            
+            HashMap<Integer, Object> currentMinExtraEdgeCountOrder = findMinEkstraEdgeCountOrder(tempPositionToLayerMapList);
+            
+            int iCurrentExtraEdgeCount = countExtraEdges(currentMinExtraEdgeCountOrder);
+            if(iCurrentExtraEdgeCount < iMinExtraEdgeCount)
+            {
+                minExtraEdgeCountOrder = currentMinExtraEdgeCountOrder;
+            }
+        }
+        
+        if(minExtraEdgeCountOrder != null)
+        {
+            positionToLayerMap = minExtraEdgeCountOrder;
+        }
+    }
+    
+    /** 
+     * Try to find an order that has the given layer parameter on top and can cover
+     * all layers. All layers need to have connection between their bottom layer.
+     * @param topLayer
+     * @return List<HashMap<Integer, Object>> : list of possible orders
+     * of layers if can find order, null otherwise
+     */
+    private List<Map> findPossibleOrders(Object topLayer)
+    {
+        HashMap<Integer, Object> beginningOrder = new HashMap<Integer, Object>();
+        beginningOrder.put(0, topLayer);
+        appendToOrder(beginningOrder);
+        
+        return orderList;
+    }
+
+    /**
+     * Foreach next available layers called 'nextLayer', appends 'nextLayer' to
+     * the end of the currentOrder and if this number of extra edges is less than the the previous orders listed in
+     * orderList, adds  .
+     * 
+     * @param currentOrder 
+     */
+    private void appendToOrder(HashMap<Integer, Object> currentOrder)
+    {
+        // Limit possible order list up to 100
+        if(orderList.size() >= 100)
+        {
+            return;
+        }
+        
+        Object currentBottomLayer = (Object)currentOrder.get(currentOrder.size() - 1);
+        
+        List<Object> nextLayers = (List<Object>)layerToLayerConnections.get(currentBottomLayer);
+        
+        for(Object nextLayer : nextLayers)
+        {
+            if(!currentOrder.containsValue(nextLayer))
+            {
+                HashMap<Integer, Object> layerAddedOrder = (HashMap<Integer, Object>)currentOrder.clone();
+                layerAddedOrder.put(currentOrder.size(), nextLayer);
+                
+                if(layerAddedOrder.size() == layerToNodesMap.size())
+                {
+                    int iExtraEdgeCount = countExtraEdges(layerAddedOrder);
+                    if(iExtraEdgeCount < iMinExtraEdgeCountOfOrder)
+                    {
+                        orderList.add((Map)layerAddedOrder.clone());
+                    }
+                }
+                else
+                {
+                    appendToOrder(layerAddedOrder);
+                }
+            }
+        }    
+    }
+
+    private HashMap<Integer, Object> findMinEkstraEdgeCountOrder(List<Map> positionToLayerMapList)
+    {
+        int iMinExtraEdgeCount = Integer.MAX_VALUE;
+        int iOrderIndex = 0;
+        int iCurrentIndex = 0;
+        for(; iCurrentIndex < positionToLayerMapList.size(); iCurrentIndex++)
+        {
+            HashMap<Integer, Object> currentOrderMap = (HashMap<Integer, Object>) positionToLayerMapList.get(iCurrentIndex);
+            
+            int iCurrentExtraEdgeCount = countExtraEdges(currentOrderMap);
+            if(iCurrentExtraEdgeCount < iMinExtraEdgeCount)
+            {
+                iMinExtraEdgeCount = iCurrentExtraEdgeCount;
+                iOrderIndex = iCurrentIndex;
+            }
+        }
+        return (HashMap<Integer, Object>) positionToLayerMapList.get(iOrderIndex);
+    }
+
+    private int countExtraEdges(HashMap<Integer, Object> orderMap)
+    {
+        int iExtraEdgeCount = 0;
+        for (int iCurrentPos = 0; iCurrentPos < orderMap.size(); iCurrentPos++)
+        {
+            Integer position = (Integer)iCurrentPos;
+            Object currentLayer = orderMap.get(position);
+
+            Object upperLayer = orderMap.get(position - 1);
+            Object bottomLayer = orderMap.get(position + 1);
+            
+            List<Object> connectedLayers = (List<Object>) layerToLayerConnections.get(currentLayer);
+            for(Object connectedLayer : connectedLayers)
+            {
+                // If connectedLayer is not adjacent, count its edge with this layer
+                if((upperLayer != null && upperLayer.equals(connectedLayer))
+                    || (bottomLayer!= null && bottomLayer.equals(connectedLayer)))
+                {
+                    continue;
+                }
+                else
+                {
+                    boolean bEdgesCountedBefore = false;
+                    
+                    for(int i = 0; i < position; i++)
+                    {
+                        if(orderMap.get(i).equals(connectedLayer))
+                        {
+                            bEdgesCountedBefore = true;
+                            break;
+                        }
+                    }
+                    
+                    if(!bEdgesCountedBefore)
+                    {
+                        iExtraEdgeCount += countEdgesBetweenLayers(currentLayer, connectedLayer);
+                    }
+                }
+            }
+        }
+        
+        return iExtraEdgeCount;
+    }
+
+    private int countEdgesBetweenLayers(Object currentLayer, Object connectedLayer)
+    {
+        int iEdgeCount = 0;
+        for(Node sourceNode : (ArrayList<Node>)layerToNodesMap.get(currentLayer))
+        {
+            for(Node targetNode : (ArrayList<Node>)layerToNodesMap.get(connectedLayer))
+            {
+                if(graph.getEdge(sourceNode, targetNode) != null)
+                {
+                    iEdgeCount++;
+                }
+            }
+        }
+        
+        return iEdgeCount;
+    }
+
+    private void applyReverse()
+    {
+        bReverseApplied = true;
+    }
+    
 }
