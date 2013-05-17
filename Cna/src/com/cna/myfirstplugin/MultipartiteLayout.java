@@ -619,7 +619,6 @@ public class MultipartiteLayout implements Layout, LongTask {
     private void changeAlignment()
     {    
         int iCurrentEdgeCrossings = calculateTotalEdgeCrossings();
-        System.out.println("Current total edge crossings = " + iCurrentEdgeCrossings);
         
         if(iCurrentEdgeCrossings == 0)
         {
@@ -652,9 +651,7 @@ public class MultipartiteLayout implements Layout, LongTask {
 
     private void changeMatrixAlignment(Integer[][] matrix, int sourceLayerPosition)
     {
-        System.out.println("matrix 1: coming from Adjacency Matrix");
         printMatrix(matrix);
-        
         
         Integer[][] matrixWithNewAlignment = new Integer[matrix.length][matrix[0].length];
         copyContent(matrixWithNewAlignment, matrix);
@@ -678,7 +675,6 @@ public class MultipartiteLayout implements Layout, LongTask {
         if(shiftParameters[0] != -1)
         {
             applyShiftToMatrix(matrixWithNewAlignment, shiftParameters);
-            System.out.println("matrix 2: clone shifted");
             printMatrix(matrixWithNewAlignment);
             
             int newEdgeCrossings = calculateEdgeCrossings(matrixWithNewAlignment);
@@ -691,7 +687,6 @@ public class MultipartiteLayout implements Layout, LongTask {
                 
                 adjacencyMatrixes.remove(sourceLayerPosition);
                 adjacencyMatrixes.add(sourceLayerPosition, matrixWithNewAlignment);
-                System.out.println("matrix 3: matrix changed in adjacency matrix ");
                 printMatrix(adjacencyMatrixes.get(sourceLayerPosition));
                 
                 //Ustteki klonlama yeterli
@@ -703,7 +698,6 @@ public class MultipartiteLayout implements Layout, LongTask {
                     shiftParameters[0] = 0;
                     applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1), shiftParameters);
                     
-                    System.out.println("matrix 4: matrix changed in next adjacency matrix");
                     printMatrix(adjacencyMatrixes.get(sourceLayerPosition + 1));
                 
                 }
@@ -713,13 +707,11 @@ public class MultipartiteLayout implements Layout, LongTask {
                     shiftParameters[0] = 1;
                     applyShiftToMatrix(adjacencyMatrixes.get(sourceLayerPosition - 1), shiftParameters);
                     
-                    System.out.println("matrix 4: matrix changed in next adjacency matrix");
                     printMatrix(adjacencyMatrixes.get(sourceLayerPosition - 1));
                 
                 }
                 
                 iTotalEdgeCrossings = calculateTotalEdgeCrossings();
-                System.out.println("New total edge crossings = " + iTotalEdgeCrossings);
                 
                 if(iTotalEdgeCrossings == 0)
                 {
@@ -1031,6 +1023,7 @@ public class MultipartiteLayout implements Layout, LongTask {
     private void resetAll()
     {
         bLayersConstructed = false;
+        bReverseApplied = false;
         layerToNodesMap.clear();
         layerToLayerConnections.clear();
         positionToLayerMap.clear();
