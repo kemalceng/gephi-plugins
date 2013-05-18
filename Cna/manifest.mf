@@ -1,5 +1,5 @@
 Manifest-Version: 1.0
-OpenIDE-Module: com.cna.myfirstplugin
-OpenIDE-Module-Localizing-Bundle: com/cna/myfirstplugin/Bundle.properties
+OpenIDE-Module: com.cna.multipartiteLayout
+OpenIDE-Module-Localizing-Bundle: com/cna/multipartiteLayout/Bundle.properties
 OpenIDE-Module-Specification-Version: 1.0
 
